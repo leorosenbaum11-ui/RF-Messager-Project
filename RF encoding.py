@@ -71,6 +71,7 @@ class Receiver:
         if current_val != self.prev_val:
             if self.ticks > 6:
                 self.ticks = 0
+                self.sampled = False
             self.prev_val = current_val
         
         self.ticks += 1
@@ -79,6 +80,7 @@ class Receiver:
         if self.ticks == 2 and not self.sampled and not self.synced:
             bit = "1" if current_val == 0 else "0"
             self.bit_buffer.append(bit)
+            self.sampled = True
             
             if len(self.bit_buffer) >= 12:
                 match = True
@@ -95,27 +97,14 @@ class Receiver:
         if self.ticks == 2 and not self.sampled and self.synced:
             bit = "1" if current_val == 0 else "0"
             self.bit_buffer.append(bit)
+            self.sampled = True
             
-        if self.ticks > 16 and self.prev_val == current_val and self.synced and len(self.bit_buffer) > 12:
+        if self.ticks > 16 and self.prev_val == current_val and self.synced and len(self.bit_buffer) > 12 and not self.dataReady:
             self.dataReady = True
-
-     def decode(self, buffer):
-        if self.dataReady:
-            self.bit_buffer = []
-            self.ticks = 0
-            self.synced = False
-            
-            #convert to string
-            self.string_buffer = "".join(self.bit_buffer)
-            
-            if self.string_buffer[0: 4].endswith(self.footprint):
-                Individual.message += chr(int(self.string_buffer[4:], 2))
-            
-            self.dataReady = False
     
     def start(self):
         #starts listening for header(self.synced)
-        self.bit_buffer = ""
+        self.bit_buffer = []
         self.ticks = 0
         self.synced = False
         self.tim.init(freq=Individual.samplerate, mode=Timer.PERIODIC, callback=self._callback)
@@ -129,6 +118,27 @@ class Receiver:
     def stopclock(self):
         self.tim.deinit()
         self.decoding = False
+
+    
+    def decode(self, buffer):
+        if self.dataReady:
+            self.ticks = 0
+            self.synced = False
+            
+            #convert to string and clear bit_buffer
+            self.string_buffer = "".join(self.bit_buffer)
+            self.bit_buffer = []
+            
+            if self.string_buffer[0:4] == self.footprint:
+                Individual.message += chr(int(self.string_buffer[4:12], 2))
+            else:
+                self.synced = False
+                self.bit_buffer = []
+                self.ticks = 0
+                self.sampled = False
+                self.decoding = True
+            
+            self.dataReady = False
 
 #loopback
 test1 = Individual("1101")
