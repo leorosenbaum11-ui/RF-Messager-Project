@@ -5,6 +5,7 @@ from machine import Timer
 #pins
 txser = machine.Pin(17, machine.Pin.OUT)
 rxser = machine.Pin(16, machine.Pin.IN)
+intled = machine.Pin(25, machine.Pin.OUT)
 
 #backside/transcieving
 class Individual:
@@ -15,7 +16,7 @@ class Individual:
     
     def __init__(self, footprint):
         self.tx = Transmitter(footprint)
-        self.rx = Receiver(footprint)
+        self.rx = Receiver(footprint, self)
         self.message = ""
         
 
@@ -35,19 +36,21 @@ class Transmitter:
         return finaltransmit
     
     def transmit(self, code):
+        txser.low()
         for pulse in code:
             if pulse == "1":
                 txser.high()
             else:
                 txser.low()
-            time.sleep_us(Individual.bit_duration/2)
+            time.sleep_us(Individual.bit_duration//2)
         txser.low()
 
 class Receiver:
-    def __init__(self, footprint):
+    def __init__(self, footprint, parent):
         #id and clock
         self.footprint = footprint #identification
         self.tim = Timer(-1)
+        self.parent = parent
         
         #isr
         self.ticks = 0
@@ -61,7 +64,6 @@ class Receiver:
         
         #decoding
         self.string_buffer = ""
-        self.decoding = True #when to stop calling decode
         
     def _callback(self, t):
         #cant allocate memory for arrays or do cpu intense in here, because it happens 800hz and GC will mess stuff up
@@ -70,6 +72,7 @@ class Receiver:
         #clock recovery, reset ticks at middle of bit
         if current_val != self.prev_val:
             if self.ticks > 6:
+                #print("transition detected at tick: ", self.ticks, ", current_val at 75% of previous bit: ", current_val)
                 self.ticks = 0
                 self.sampled = False
             self.prev_val = current_val
@@ -77,10 +80,9 @@ class Receiver:
         self.ticks += 1
         
         #unsynced header check
-        if self.ticks == 2 and not self.sampled and not self.synced:
-            bit = "1" if current_val == 0 else "0"
+        if self.ticks == 2 and not self.synced or self.ticks == 6 and not self.synced:
+            bit = "0" if current_val == 0 else "1"
             self.bit_buffer.append(bit)
-            self.sampled = True
             
             if len(self.bit_buffer) >= 12:
                 match = True
@@ -94,12 +96,13 @@ class Receiver:
                     self.bit_buffer = []
         
         #synced data storage
-        if self.ticks == 2 and not self.sampled and self.synced:
-            bit = "1" if current_val == 0 else "0"
-            self.bit_buffer.append(bit)
-            self.sampled = True
+        if self.synced:
+            if self.ticks == 2 and not self.sampled:
+                bit = "1" if current_val == 0 else "0"
+                self.bit_buffer.append(bit)
+                self.sampled = True
             
-        if self.ticks > 16 and self.prev_val == current_val and self.synced and len(self.bit_buffer) > 12 and not self.dataReady:
+        if self.ticks > 16 and self.prev_val == current_val and self.synced and len(self.bit_buffer) >= 12 and not self.dataReady:
             self.dataReady = True
     
     def start(self):
@@ -108,16 +111,11 @@ class Receiver:
         self.ticks = 0
         self.synced = False
         self.tim.init(freq=Individual.samplerate, mode=Timer.PERIODIC, callback=self._callback)
-        self.decoding = True
-        
-        while True:
-            self.decode(self.bit_buffer)
-            if self.decoding == False:
-                break
+        self.prev_val = rxser.value()
         
     def stopclock(self):
         self.tim.deinit()
-        self.decoding = False
+        time.sleep_ms(100)
 
     
     def decode(self, buffer):
@@ -130,15 +128,16 @@ class Receiver:
             self.bit_buffer = []
             
             if self.string_buffer[0:4] == self.footprint:
-                Individual.message += chr(int(self.string_buffer[4:12], 2))
+                self.parent.message += chr(int(self.string_buffer[4:12], 2))
             else:
                 self.synced = False
                 self.bit_buffer = []
                 self.ticks = 0
                 self.sampled = False
-                self.decoding = True
             
             self.dataReady = False
+
+intled.high()
 
 #loopback
 test1 = Individual("1101")
@@ -152,6 +151,9 @@ test1.tx.transmit(encoded)
 
 #print recieved
 time.sleep(1)
+test1.rx.decode(test1.rx.bit_buffer)
+time.sleep_ms(10)
+test1.rx.stopclock()
 print(test1.message)
     
 
