@@ -58,10 +58,10 @@ class Receiver:
         self.sampled = False #check if sampled each bit
         self.synced = False #check if locked to a transmission through header
         self.dataReady = False #check if transmission finished
-        self.stopDecoding = False
         
         #decoding
         self.string_buffer = ""
+        self.decoding = True #when to stop calling decode
         
     def _callback(self, t):
         #cant allocate memory for arrays or do cpu intense in here, because it happens 800hz and GC will mess stuff up
@@ -98,22 +98,8 @@ class Receiver:
             
         if self.ticks > 16 and self.prev_val == current_val and self.synced and len(self.bit_buffer) > 12:
             self.dataReady = True
-            
-    def start(self):
-        #starts listening for header(self.synced)
-        self.bit_buffer = ""
-        self.ticks = 0
-        self.synced = False
-        self.tim.init(freq=Individual.samplerate, mode=Timer.PERIODIC, callback=self._callback)
-        self.decode(self.bit_buffer)
-        self.stopDecoding = False
-        
-        while True:
-            decode(self.bit_buffer)
-            if self.stopDecoding:
-                break
-        
-    def decode(self, buffer):
+
+     def decode(self, buffer):
         if self.dataReady:
             self.bit_buffer = []
             self.ticks = 0
@@ -122,14 +108,27 @@ class Receiver:
             #convert to string
             self.string_buffer = "".join(self.bit_buffer)
             
-            if self.bit_buffer[0: 4].endswith(self.footprint):
+            if self.string_buffer[0: 4].endswith(self.footprint):
                 Individual.message += chr(int(self.string_buffer[4:], 2))
             
             self.dataReady = False
+    
+    def start(self):
+        #starts listening for header(self.synced)
+        self.bit_buffer = ""
+        self.ticks = 0
+        self.synced = False
+        self.tim.init(freq=Individual.samplerate, mode=Timer.PERIODIC, callback=self._callback)
+        self.decoding = True
+        
+        while True:
+            self.decode(self.bit_buffer)
+            if self.decoding == False:
+                break
         
     def stopclock(self):
         self.tim.deinit()
-        self.stopDecoding
+        self.decoding = False
 
 #loopback
 test1 = Individual("1101")
