@@ -94,6 +94,7 @@ class Receiver:
                 if match:
                     self.synced = True
                     self.bit_buffer = []
+                    print("synced")
         
         #synced data storage
         if self.synced:
@@ -129,11 +130,13 @@ class Receiver:
             
             if self.string_buffer[0:4] == self.footprint:
                 self.parent.message += chr(int(self.string_buffer[4:12], 2))
+                print("matching footprint")
             else:
                 self.synced = False
                 self.bit_buffer = []
                 self.ticks = 0
                 self.sampled = False
+                print("unmatching footprint")
             
             self.dataReady = False
 
@@ -141,19 +144,29 @@ intled.high()
 
 #loopback
 test1 = Individual("1101")
-encoded = test1.tx.encode("A")
+encoded = ""
+
+encoded += input("Add to message: ")
 
 #start listening and decoding
 test1.rx.start()
 
-#transmit
-test1.tx.transmit(encoded)
 
-#print recieved
-time.sleep(1)
-test1.rx.decode(test1.rx.bit_buffer)
+encodeds = tuple(encoded)
+for char in encodeds:
+    test1.tx.transmit(test1.tx.encode(char))
+    time.sleep_ms(20)
+    
+    if test1.rx.dataReady:
+        test1.rx.decode(test1.rx.bit_buffer)
+        time.sleep_ms(20)
+        print("recieved data: ",  test1.message)
+        test1.rx.dataReady = False
+        test1.rx.synced = False
+        test1.rx.bit_buffer = []
+        test1.rx.sampled = False
+
 time.sleep_ms(10)
 test1.rx.stopclock()
-print(test1.message)
-    
 
+    
