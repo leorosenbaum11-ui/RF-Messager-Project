@@ -1,5 +1,6 @@
 import machine
 import time
+import _thread
 from machine import Timer
 
 #pins
@@ -18,6 +19,45 @@ class Individual:
         self.tx = Transmitter(footprint)
         self.rx = Receiver(footprint, self)
         self.message = ""
+        self.txMsg = ""
+        self.modus = True #true is recieve false is send
+        
+    def stopRx(self):
+        self.rx.stopclock()
+        self.bit_buffer = []
+        self.ticks = 0
+        self.synced = False
+        self.sampled = False
+        self.prev_val = rxser.value()
+        
+    def decodeLoop_core1(self):
+        #to run on core 1
+        while True:
+            if self.rx.dataReady:
+                self.rx.decode(self.rx.bit_buffer)
+                
+                #flags
+                self.rx.dataReady = False
+                self.rx.synced = False
+                self.rx.bit_buffer = []
+                self.rx.sampled = False
+                
+                if self.message.endswith("led on "):
+                    intled.high()
+                elif self.message.endswith("led off "):
+                    intled.low()
+                    
+                time.sleep_us(1250)
+                print(self.message)
+        
+    def startTx(self, msg): #input("Add to message: ")
+        self.txMsg = msg
+        for char in tuple(self.txMsg):
+            self.tx.transmit(self.tx.encode(char))
+            #print(char)
+            time.sleep_ms(26)
+        self.tx.transmit(self.tx.encode(" "))
+        time.sleep_ms(26)
         
 
 class Transmitter:
@@ -94,7 +134,6 @@ class Receiver:
                 if match:
                     self.synced = True
                     self.bit_buffer = []
-                    print("synced")
         
         #synced data storage
         if self.synced:
@@ -108,6 +147,7 @@ class Receiver:
     
     def start(self):
         #starts listening for header(self.synced)
+        self.sampled = False
         self.bit_buffer = []
         self.ticks = 0
         self.synced = False
@@ -130,7 +170,6 @@ class Receiver:
             
             if self.string_buffer[0:4] == self.footprint:
                 self.parent.message += chr(int(self.string_buffer[4:12], 2))
-                print("matching footprint")
             else:
                 self.synced = False
                 self.bit_buffer = []
@@ -140,33 +179,14 @@ class Receiver:
             
             self.dataReady = False
 
-intled.high()
-
 #loopback
-test1 = Individual("1101")
-encoded = ""
+intled.low()
+heydude = Individual("1101")
 
-encoded += input("Add to message: ")
+heydude.rx.start()
+_thread.start_new_thread(heydude.decodeLoop_core1, ())
 
-#start listening and decoding
-test1.rx.start()
+while True:
+    heydude.startTx(input("sending: "))
 
-
-encodeds = tuple(encoded)
-for char in encodeds:
-    test1.tx.transmit(test1.tx.encode(char))
-    time.sleep_ms(20)
-    
-    if test1.rx.dataReady:
-        test1.rx.decode(test1.rx.bit_buffer)
-        time.sleep_ms(20)
-        print("recieved data: ",  test1.message)
-        test1.rx.dataReady = False
-        test1.rx.synced = False
-        test1.rx.bit_buffer = []
-        test1.rx.sampled = False
-
-time.sleep_ms(10)
-test1.rx.stopclock()
-
-    
+#9459940614
