@@ -12,15 +12,14 @@ intled = machine.Pin(25, machine.Pin.OUT)
 class Individual:
     header = "101010101011"
     header_tuple = ["1", "0", "1", "0", "1", "0", "1", "0", "1", "0", "1", "1"]
-    bit_duration = 10000 #10,000 microseconds, 10ms, 100hz
-    samplerate = 800 #in hz, 1/8th of bitrate
     
-    def __init__(self, footprint):
-        self.tx = Transmitter(footprint)
+    def __init__(self, footprint, bit_duration):
+        self.bit_duration = bit_duration
+        self.samplerate = (1000000 // self.bit_duration) * 8
+        self.tx = Transmitter(footprint, self)
         self.rx = Receiver(footprint, self)
         self.message = ""
         self.txMsg = ""
-        self.modus = True #true is recieve false is send
         
     def stopRx(self):
         self.rx.stopclock()
@@ -36,33 +35,41 @@ class Individual:
             if self.rx.dataReady:
                 self.rx.decode(self.rx.bit_buffer)
                 
-                #flags
-                self.rx.dataReady = False
-                self.rx.synced = False
-                self.rx.bit_buffer = []
-                self.rx.sampled = False
-                
                 if self.message.endswith("led on "):
                     intled.high()
                 elif self.message.endswith("led off "):
                     intled.low()
                     
-                time.sleep_us(1250)
-                print(self.message)
+                time.sleep_us(int(self.bit_duration // 12.5))
+                print("recieved: ", self.message)
+                print("----------------------------------------")
         
-    def startTx(self, msg): #input("Add to message: ")
+    def startTx(self, msg):
+        txser.low()
         self.txMsg = msg
+        
+        txser.high()
+        time.sleep_us(self.bit_duration * 2)
+        txser.low()
+        time.sleep_us(self.bit_duration * 2)
+                
+        self.tx.transmit(self.tx.encode(" "))
+        time.sleep_us(int(self.bit_duration * 2.6))
+        self.tx.transmit(self.tx.encode(" "))
+        time.sleep_us(int(self.bit_duration * 2.6))
+        
         for char in tuple(self.txMsg):
             self.tx.transmit(self.tx.encode(char))
-            #print(char)
-            time.sleep_ms(26)
+            print(char, " has been sent with footprint: ", self.tx.footprint)
+            time.sleep_us(int(self.bit_duration * 2.6))
         self.tx.transmit(self.tx.encode(" "))
-        time.sleep_ms(26)
+        time.sleep_us(int(self.bit_duration * 2.6))
         
 
 class Transmitter:
-    def __init__(self, footprint):
+    def __init__(self, footprint, parent):
         self.footprint = footprint #identification
+        self.parent = parent
         
     def encode(self, char):
         #content
@@ -76,13 +83,12 @@ class Transmitter:
         return finaltransmit
     
     def transmit(self, code):
-        txser.low()
         for pulse in code:
             if pulse == "1":
                 txser.high()
             else:
                 txser.low()
-            time.sleep_us(Individual.bit_duration//2)
+            time.sleep_us(self.parent.bit_duration//2)
         txser.low()
 
 class Receiver:
@@ -132,6 +138,8 @@ class Receiver:
                         break
                 
                 if match:
+                    print("matched onto header")
+                    print(self.bit_buffer)
                     self.synced = True
                     self.bit_buffer = []
         
@@ -142,7 +150,7 @@ class Receiver:
                 self.bit_buffer.append(bit)
                 self.sampled = True
             
-        if self.ticks > 16 and self.prev_val == current_val and self.synced and len(self.bit_buffer) >= 12 and not self.dataReady:
+        if self.ticks > 16 and self.prev_val == current_val and self.synced and len(self.bit_buffer) >= len(self.footprint) + 8 and not self.dataReady:
             self.dataReady = True
     
     def start(self):
@@ -151,7 +159,7 @@ class Receiver:
         self.bit_buffer = []
         self.ticks = 0
         self.synced = False
-        self.tim.init(freq=Individual.samplerate, mode=Timer.PERIODIC, callback=self._callback)
+        self.tim.init(freq=self.parent.samplerate, mode=Timer.PERIODIC, callback=self._callback)
         self.prev_val = rxser.value()
         
     def stopclock(self):
@@ -166,22 +174,25 @@ class Receiver:
             
             #convert to string and clear bit_buffer
             self.string_buffer = "".join(self.bit_buffer)
+            print(self.string_buffer)
             self.bit_buffer = []
             
-            if self.string_buffer[0:4] == self.footprint:
-                self.parent.message += chr(int(self.string_buffer[4:12], 2))
+            #flags
+            self.dataReady = False
+            self.synced = False
+            self.sampled = False
+            self.ticks = 0
+            
+            if self.string_buffer[0:len(self.footprint)] == self.footprint:
+                self.parent.message += chr(int(self.string_buffer[len(self.footprint):len(self.footprint) + 8], 2))
             else:
-                self.synced = False
-                self.bit_buffer = []
-                self.ticks = 0
-                self.sampled = False
                 print("unmatching footprint")
             
             self.dataReady = False
 
 #loopback
 intled.low()
-heydude = Individual("1101")
+heydude = Individual("110110", 5000)
 
 heydude.rx.start()
 _thread.start_new_thread(heydude.decodeLoop_core1, ())
