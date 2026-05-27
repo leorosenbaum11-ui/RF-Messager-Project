@@ -12,11 +12,11 @@ intled = machine.Pin(25, machine.Pin.OUT)
 class Individual:
     header = "101010101011"
     header_tuple = ["1", "0", "1", "0", "1", "0", "1", "0", "1", "0", "1", "1"]
-    bit_duration = 10000 #10,000 microseconds, 10ms, 100hz
-    samplerate = 800 #in hz, 1/8th of bitrate
     
-    def __init__(self, footprint):
-        self.tx = Transmitter(footprint)
+    def __init__(self, footprint, bit_duration):
+        self.bit_duration = bit_duration
+        self.samplerate = (1000000 // self.bit_duration) * 8
+        self.tx = Transmitter(footprint, self)
         self.rx = Receiver(footprint, self)
         self.message = ""
         self.txMsg = ""
@@ -40,7 +40,7 @@ class Individual:
                 elif self.message.endswith("led off "):
                     intled.low()
                     
-                time.sleep_us(800)
+                time.sleep_us(int(self.bit_duration // 12.5))
                 print("recieved: ", self.message)
                 print("----------------------------------------")
         
@@ -49,26 +49,27 @@ class Individual:
         self.txMsg = msg
         
         txser.high()
-        time.sleep_ms(20)
+        time.sleep_us(self.bit_duration * 2)
         txser.low()
-        time.sleep_ms(20)
+        time.sleep_us(self.bit_duration * 2)
                 
         self.tx.transmit(self.tx.encode(" "))
-        time.sleep_ms(26)
+        time.sleep_us(int(self.bit_duration * 2.6))
         self.tx.transmit(self.tx.encode(" "))
-        time.sleep_ms(26)
+        time.sleep_us(int(self.bit_duration * 2.6))
         
         for char in tuple(self.txMsg):
             self.tx.transmit(self.tx.encode(char))
             print(char, " has been sent with footprint: ", self.tx.footprint)
-            time.sleep_ms(26)
+            time.sleep_us(int(self.bit_duration * 2.6))
         self.tx.transmit(self.tx.encode(" "))
-        time.sleep_ms(26)
+        time.sleep_us(int(self.bit_duration * 2.6))
         
 
 class Transmitter:
-    def __init__(self, footprint):
+    def __init__(self, footprint, parent):
         self.footprint = footprint #identification
+        self.parent = parent
         
     def encode(self, char):
         #content
@@ -87,7 +88,7 @@ class Transmitter:
                 txser.high()
             else:
                 txser.low()
-            time.sleep_us(Individual.bit_duration//2)
+            time.sleep_us(self.parent.bit_duration//2)
         txser.low()
 
 class Receiver:
@@ -149,7 +150,7 @@ class Receiver:
                 self.bit_buffer.append(bit)
                 self.sampled = True
             
-        if self.ticks > 16 and self.prev_val == current_val and self.synced and len(self.bit_buffer) >= 12 and not self.dataReady:
+        if self.ticks > 16 and self.prev_val == current_val and self.synced and len(self.bit_buffer) >= len(self.footprint) + 8 and not self.dataReady:
             self.dataReady = True
     
     def start(self):
@@ -158,7 +159,7 @@ class Receiver:
         self.bit_buffer = []
         self.ticks = 0
         self.synced = False
-        self.tim.init(freq=Individual.samplerate, mode=Timer.PERIODIC, callback=self._callback)
+        self.tim.init(freq=self.parent.samplerate, mode=Timer.PERIODIC, callback=self._callback)
         self.prev_val = rxser.value()
         
     def stopclock(self):
@@ -182,8 +183,8 @@ class Receiver:
             self.sampled = False
             self.ticks = 0
             
-            if self.string_buffer[0:4] == self.footprint:
-                self.parent.message += chr(int(self.string_buffer[4:12], 2))
+            if self.string_buffer[0:len(self.footprint)] == self.footprint:
+                self.parent.message += chr(int(self.string_buffer[len(self.footprint):len(self.footprint) + 8], 2))
             else:
                 print("unmatching footprint")
             
@@ -191,7 +192,7 @@ class Receiver:
 
 #loopback
 intled.low()
-heydude = Individual("1101")
+heydude = Individual("110110", 5000)
 
 heydude.rx.start()
 _thread.start_new_thread(heydude.decodeLoop_core1, ())
