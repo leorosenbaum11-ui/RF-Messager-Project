@@ -1,5 +1,6 @@
 import machine
 import time
+import _thread
 from machine import Timer
 
 #pins
@@ -20,18 +21,6 @@ class Individual:
         self.message = ""
         self.txMsg = ""
         
-    def startRx(self):
-        test1.rx.start()
-        
-        if test1.rx.dataReady: #need to do some type of async thing
-            test1.rx.decode(test1.rx.bit_buffer)
-            time.sleep_ms(20)
-            print("recieved data: ",  test1.message)
-            test1.rx.dataReady = False
-            test1.rx.synced = False
-            test1.rx.bit_buffer = []
-            test1.rx.sampled = False
-            
     def stopRx(self):
         self.rx.stopclock()
         self.bit_buffer = []
@@ -40,11 +29,41 @@ class Individual:
         self.sampled = False
         self.prev_val = rxser.value()
         
-    def startTx(self, msg): #input("Add to message: ")
+    def decodeLoop_core1(self):
+        #to run on core 1
+        while True:
+            if self.rx.dataReady:
+                self.rx.decode(self.rx.bit_buffer)
+                
+                if self.message.endswith("led on "):
+                    intled.high()
+                elif self.message.endswith("led off "):
+                    intled.low()
+                    
+                time.sleep_us(800)
+                print("recieved: ", self.message)
+                print("----------------------------------------")
+        
+    def startTx(self, msg):
+        txser.low()
         self.txMsg = msg
+        
+        txser.high()
+        time.sleep_ms(20)
+        txser.low()
+        time.sleep_ms(20)
+                
+        self.tx.transmit(self.tx.encode(" "))
+        time.sleep_ms(26)
+        self.tx.transmit(self.tx.encode(" "))
+        time.sleep_ms(26)
+        
         for char in tuple(self.txMsg):
-            test1.tx.transmit(test1.tx.encode(char))
-            time.sleep_ms(20)
+            self.tx.transmit(self.tx.encode(char))
+            print(char, " has been sent with footprint: ", self.tx.footprint)
+            time.sleep_ms(26)
+        self.tx.transmit(self.tx.encode(" "))
+        time.sleep_ms(26)
         
 
 class Transmitter:
@@ -63,7 +82,6 @@ class Transmitter:
         return finaltransmit
     
     def transmit(self, code):
-        txser.low()
         for pulse in code:
             if pulse == "1":
                 txser.high()
@@ -119,9 +137,10 @@ class Receiver:
                         break
                 
                 if match:
+                    print("matched onto header")
+                    print(self.bit_buffer)
                     self.synced = True
                     self.bit_buffer = []
-                    print("synced")
         
         #synced data storage
         if self.synced:
@@ -154,20 +173,30 @@ class Receiver:
             
             #convert to string and clear bit_buffer
             self.string_buffer = "".join(self.bit_buffer)
+            print(self.string_buffer)
             self.bit_buffer = []
+            
+            #flags
+            self.dataReady = False
+            self.synced = False
+            self.sampled = False
+            self.ticks = 0
             
             if self.string_buffer[0:4] == self.footprint:
                 self.parent.message += chr(int(self.string_buffer[4:12], 2))
-                print("matching footprint")
             else:
-                self.synced = False
-                self.bit_buffer = []
-                self.ticks = 0
-                self.sampled = False
                 print("unmatching footprint")
             
             self.dataReady = False
 
 #loopback
 intled.low()
-test1 = Individual("1101")
+heydude = Individual("1101")
+
+heydude.rx.start()
+_thread.start_new_thread(heydude.decodeLoop_core1, ())
+
+while True:
+    heydude.startTx(input("sending: "))
+
+#9459940614
